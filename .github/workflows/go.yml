@@ -16,5 +16,15 @@ jobs:
     - name: Check out code into the Go module directory
       uses: actions/checkout@v1
 
-    - name: Build & Test
-      run: make ci
+    - name: Test Project1
+      run: make project1
+      
+    - name: Test Project2aa
+      run: make project2aa
+      
+    - name: Test Project2ab
+      run: make project2ab
+      
+    - name: Test Project2ac
+      run: make project2ac
+      
