@@ -19,4 +19,7 @@ type StorageReader interface {
 	GetCF(cf string, key []byte) ([]byte, error)
 	IterCF(cf string) engine_util.DBIterator
 	Close()
+
+	//这里面的东西是要自己实现
+
 }

@@ -16,10 +16,9 @@ package raft
 
 import (
 	"bytes"
+	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 	"reflect"
 	"testing"
-
-	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 )
 
 type ignoreSizeHintMemStorage struct {
@@ -206,7 +205,18 @@ func TestRawNodeRestart2AC(t *testing.T) {
 	}
 	rd := rawNode.Ready()
 	if !reflect.DeepEqual(rd, want) {
-		t.Errorf("g = %+v,\n             w   %+v", rd, want)
+
+		if !reflect.DeepEqual(rd.Entries, want.Entries) {
+			println("entries not equal")
+		}
+		if !reflect.DeepEqual(rd.CommittedEntries, want.CommittedEntries) {
+			println("CommittedEntries not equal")
+		}
+		if !reflect.DeepEqual(rd.Messages, want.Messages) {
+			println("msgs not equal")
+		}
+
+		t.Errorf("g = %+v,\n                 w = %+v", rd, want)
 	}
 	rawNode.Advance(rd)
 	if rawNode.HasReady() {

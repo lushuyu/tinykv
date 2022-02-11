@@ -50,13 +50,25 @@ type RaftLog struct {
 	pendingSnapshot *pb.Snapshot
 
 	// Your Data Here (2A).
+	firstIndex uint64
 }
 
 // newLog returns log using the given storage. It recovers the log
 // to the state that it just commits and applies the latest snapshot.
 func newLog(storage Storage) *RaftLog {
 	// Your Code Here (2A).
-	return nil
+	firstIndex, _ := storage.FirstIndex()
+	lastIndex, _ := storage.LastIndex()
+	hardState, _, _ := storage.InitialState()
+	entries, _ := storage.Entries(firstIndex, lastIndex+1)
+	return &RaftLog{
+		storage:    storage,
+		entries:    entries,
+		committed:  hardState.Commit,
+		applied:    firstIndex - 1,
+		stabled:    lastIndex,
+		firstIndex: firstIndex,
+	}
 }
 
 // We need to compact the log entries in some point of time like
@@ -69,23 +81,90 @@ func (l *RaftLog) maybeCompact() {
 // unstableEntries return all the unstable entries
 func (l *RaftLog) unstableEntries() []pb.Entry {
 	// Your Code Here (2A).
-	return nil
+	if len(l.entries) > 0 {
+		if (l.stabled-l.FirstIndex()+1 < 0) ||
+			(l.stabled-l.FirstIndex()+1 > uint64(len(l.entries))) {
+			return make([]pb.Entry, 0)
+		}
+		return l.entries[l.stabled-l.FirstIndex()+1:]
+	}
+	return make([]pb.Entry, 0)
 }
 
 // nextEnts returns all the committed but not applied entries
 func (l *RaftLog) nextEnts() (ents []pb.Entry) {
 	// Your Code Here (2A).
-	return nil
+	if len(l.entries) > 0 {
+		if l.committed-l.FirstIndex()+1 < 0 || l.applied-l.FirstIndex()+1 > l.LastIndex() {
+			return make([]pb.Entry, 0)
+		}
+		if l.applied-l.FirstIndex()+1 >= 0 && l.committed-l.FirstIndex()+1 <= uint64(len(l.entries)) {
+			return l.entries[l.applied-l.FirstIndex()+1 : l.committed-l.FirstIndex()+1]
+		}
+	}
+	return make([]pb.Entry, 0)
 }
 
 // LastIndex return the last index of the log entries
 func (l *RaftLog) LastIndex() uint64 {
 	// Your Code Here (2A).
-	return 0
+	//完成LastIndex
+	if len(l.entries) == 0 {
+		return l.stabled
+	}
+	return l.entries[len(l.entries)-1].Index
+}
+
+func (l *RaftLog) FirstIndex() uint64 {
+	if len(l.entries) == 0 {
+		QAQ, _ := l.storage.FirstIndex()
+		return QAQ - 1
+	}
+	return l.entries[0].Index
 }
 
 // Term return the term of the entry in the given index
 func (l *RaftLog) Term(i uint64) (uint64, error) {
 	// Your Code Here (2A).
-	return 0, nil
+	//stabled为保存到非易失性存储中的日志序号的上限，所有index <= stabled都已经保存到非易失性存储中
+	//entries为为压缩到非易失性存储的日志数组；
+	if len(l.entries) > 0 {
+		begin := l.FirstIndex()
+		if i >= begin {
+			_index := i - begin
+			if _index >= uint64(len(l.entries)) {
+				return 0, ErrUnavailable
+			}
+			return l.entries[_index].Term, nil
+		}
+	}
+	term, _error := l.storage.Term(i) //从storage里面取出 term
+	if _error == ErrUnavailable && !IsEmptySnap(l.pendingSnapshot) {
+		if i < l.pendingSnapshot.Metadata.Index {
+			_error = ErrCompacted
+		}
+	}
+	return term, _error
+}
+
+func (l *RaftLog) LastTerm() uint64 {
+	LT, _ := l.Term(l.LastIndex())
+	return LT
+}
+
+func (r *Raft) softState() *SoftState {
+	softState := SoftState{
+		Lead:      r.Lead,
+		RaftState: r.State,
+	}
+	return &softState
+}
+
+func (r *Raft) hardState() pb.HardState {
+	hardState := pb.HardState{
+		Term:   r.Term,
+		Vote:   r.Vote,
+		Commit: r.RaftLog.committed,
+	}
+	return hardState
 }
