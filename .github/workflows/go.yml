@@ -3,7 +3,7 @@ on: [push,pull_request]
 jobs:
 
   build:
-    name: Build & Test
+    name: Test Project1 to Project 2ac
     runs-on: ubuntu-latest
     steps:
 
