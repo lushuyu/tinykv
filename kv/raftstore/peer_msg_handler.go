@@ -5,6 +5,7 @@ import (
 	"github.com/pingcap-incubator/tinykv/kv/raftstore/meta"
 	"github.com/pingcap-incubator/tinykv/kv/util/engine_util"
 	"github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
+	"reflect"
 	"time"
 
 	"github.com/Connor1996/badger/y"
@@ -55,7 +56,25 @@ func (d *peerMsgHandler) process(entry *eraftpb.Entry) {
 		panic(_error)
 	}
 	if len(msg.Requests) == 0 {
-		return
+		if msg.AdminRequest != nil {
+			req := msg.AdminRequest
+			switch req.CmdType {
+			case raft_cmdpb.AdminCmdType_CompactLog:
+				compactLog := req.GetCompactLog()
+				if compactLog.CompactIndex >= d.peerStorage.applyState.TruncatedState.Index {
+					d.peerStorage.applyState.TruncatedState.Index = compactLog.CompactIndex
+					d.peerStorage.applyState.TruncatedState.Term = compactLog.CompactTerm
+					kvWB.SetMeta(meta.ApplyStateKey(d.regionId), d.peerStorage.applyState)
+					_error = kvWB.WriteToDB(d.peerStorage.Engines.Kv)
+					if _error != nil {
+						panic(_error)
+					}
+					d.ScheduleCompactLog(compactLog.CompactIndex)
+				}
+			case raft_cmdpb.AdminCmdType_Split:
+				return
+			}
+		}
 	}
 
 	for _, request := range msg.Requests {
@@ -144,7 +163,7 @@ func (d *peerMsgHandler) HandleRaftReady() {
 		if _error != nil {
 			return
 		}
-		if result != nil {
+		if result != nil && !reflect.DeepEqual(result.PrevRegion, result.Region) {
 			d.peerStorage.SetRegion(result.Region)
 			d.ctx.storeMeta.Lock()
 			d.ctx.storeMeta.regions[result.Region.Id] = result.Region
@@ -270,6 +289,19 @@ func (d *peerMsgHandler) proposeRaftCommand(msg *raft_cmdpb.RaftCmdRequest, cb *
 			if err != nil {
 				continue
 			}
+		}
+	} else if msg.AdminRequest != nil {
+		req := msg.AdminRequest
+		switch req.CmdType {
+		case raft_cmdpb.AdminCmdType_ChangePeer:
+		case raft_cmdpb.AdminCmdType_CompactLog:
+			data, err := msg.Marshal()
+			if err != nil {
+				panic(err)
+			}
+			d.RaftGroup.Propose(data)
+		case raft_cmdpb.AdminCmdType_TransferLeader:
+		case raft_cmdpb.AdminCmdType_Split:
 		}
 	}
 }

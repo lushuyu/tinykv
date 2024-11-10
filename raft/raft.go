@@ -237,7 +237,33 @@ func (r *Raft) sendAppend(to uint64) bool {
 	}
 	preLogIndex := r.Prs[to].Next - 1
 	firstIndex := r.RaftLog.FirstIndex()
-	preLogTerm, _ := r.RaftLog.Term(preLogIndex)
+	preLogTerm, err := r.RaftLog.Term(preLogIndex)
+
+	if err != nil {
+		if err == ErrCompacted {
+			err = nil
+			var snapshot pb.Snapshot
+			if IsEmptySnap(r.RaftLog.pendingSnapshot) {
+				snapshot, err = r.RaftLog.storage.Snapshot()
+			} else {
+				snapshot = *r.RaftLog.pendingSnapshot
+			}
+			if err != nil {
+				return false
+			}
+			msg := pb.Message{
+				MsgType:  pb.MessageType_MsgSnapshot,
+				From:     r.id,
+				To:       to,
+				Term:     r.Term,
+				Snapshot: &snapshot,
+			}
+			r.msgs = append(r.msgs, msg)
+			r.Prs[to].Next = snapshot.Metadata.Index + 1
+			return false
+		}
+		return false
+	}
 
 	var _entries []*pb.Entry
 	n := r.RaftLog.LastIndex() + 1
@@ -361,14 +387,16 @@ func (r *Raft) sendRequestVote(To uint64) bool {
 	if _, ok := r.Prs[To]; !ok {
 		return false
 	}
+	lastIndex := r.RaftLog.LastIndex()
+	lastLogTerm, _ := r.RaftLog.Term(lastIndex)
 	_Request := pb.Message{
 		MsgType: pb.MessageType_MsgRequestVote,
 		To:      To,
 		From:    r.id,
 		Term:    r.Term,
-		LogTerm: r.RaftLog.LastTerm(),
-		Index:   r.RaftLog.LastIndex(),
 		Commit:  r.RaftLog.committed,
+		LogTerm: lastLogTerm,
+		Index:   lastIndex,
 		Entries: nil,
 	}
 	r.msgs = append(r.msgs, _Request)
@@ -474,6 +502,8 @@ func (r *Raft) Step(m pb.Message) error {
 			r.handleAppendEntries(m)
 		case pb.MessageType_MsgRequestVote:
 			r.handleRequestVote(m)
+		case pb.MessageType_MsgSnapshot:
+			r.handleSnapshot(m)
 		case pb.MessageType_MsgHeartbeat:
 			r.handleHeartbeat(m)
 		case pb.MessageType_MsgTimeoutNow:
@@ -515,6 +545,8 @@ func (r *Raft) Step(m pb.Message) error {
 			r.handleAppendEntries(m)
 		case pb.MessageType_MsgRequestVote:
 			r.handleRequestVote(m)
+		case pb.MessageType_MsgSnapshot:
+			r.handleSnapshot(m)
 		case pb.MessageType_MsgRequestVoteResponse:
 			r.votes[m.From] = !m.Reject
 			length := len(r.Prs) / 2
@@ -632,6 +664,8 @@ func (r *Raft) Step(m pb.Message) error {
 			}
 		case pb.MessageType_MsgRequestVote:
 			r.handleRequestVote(m)
+		case pb.MessageType_MsgSnapshot:
+			r.handleSnapshot(m)
 		case pb.MessageType_MsgHeartbeat:
 			if m.Term > r.Term {
 				r.becomeFollower(m.Term, m.From)
@@ -1006,6 +1040,34 @@ func (r *Raft) handleHeartbeat(m pb.Message) {
 // handleSnapshot handle Snapshot RPC request
 func (r *Raft) handleSnapshot(m pb.Message) {
 	// Your Code Here (2C).
+	meta := m.Snapshot.Metadata
+	if meta.Index <= r.RaftLog.committed ||
+		meta.Term < r.Term {
+		return
+	}
+	r.becomeFollower(meta.Term, m.From)
+	r.RaftLog.applied = meta.Index
+	r.RaftLog.committed = meta.Index
+	r.RaftLog.stabled = meta.Index
+	if len(r.RaftLog.entries) > 0 {
+		if meta.Index > r.RaftLog.LastIndex() {
+			r.RaftLog.entries = nil
+		} else if meta.Index >= r.RaftLog.FirstIndex() {
+			r.RaftLog.entries = r.RaftLog.entries[meta.Index-
+				r.RaftLog.FirstIndex():]
+		}
+	} else {
+		r.RaftLog.entries = append(r.RaftLog.entries, pb.Entry{
+			EntryType: pb.EntryType_EntryNormal,
+			Term:      meta.Term,
+			Index:     meta.Index,
+		})
+	}
+	r.Prs = make(map[uint64]*Progress)
+	for _, peer := range meta.ConfState.Nodes {
+		r.Prs[peer] = &Progress{}
+	}
+	r.RaftLog.pendingSnapshot = m.Snapshot
 }
 
 // addNode add a new node to raft group
