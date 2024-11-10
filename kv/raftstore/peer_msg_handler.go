@@ -132,7 +132,7 @@ func (d *peerMsgHandler) process(entry *eraftpb.Entry) {
 }
 
 func (d *peerMsgHandler) HandleRaftReady() {
-	println("d.regionId:", d.regionId)
+	//println("d.regionId:", d.regionId)
 	if d.stopped {
 		return
 	}

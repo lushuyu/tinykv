@@ -16,7 +16,9 @@ package raft
 
 import (
 	"errors"
+	"fmt"
 	"github.com/pingcap-incubator/tinykv/kv/raftstore/meta"
+	"github.com/pingcap-incubator/tinykv/kv/raftstore/util"
 	"math/rand"
 	"sort"
 
@@ -168,7 +170,10 @@ func newRaft(c *Config) *Raft {
 		panic(err.Error())
 	}
 	// Your Code Here (2A).
-	hardState, _, _ := c.Storage.InitialState()
+	hardState, confState, _ := c.Storage.InitialState()
+	if c.peers == nil {
+		c.peers = confState.Nodes
+	}
 	var raft = &Raft{
 
 		id:               c.ID,
@@ -237,9 +242,19 @@ func (r *Raft) sendAppend(to uint64) bool {
 	var _entries []*pb.Entry
 	n := r.RaftLog.LastIndex() + 1
 
+	//fmt.Printf("%d send raft message %s from %d to %d\n", r.id, pb.MessageType_MsgAppend, r.id, to)
+	//println("qaq1")
 	for i := preLogIndex + 1; i < n; i++ {
+
+		//	println("appending")
+		if i-firstIndex >= uint64(len(r.RaftLog.entries)) {
+			//println("GG")
+			continue
+		}
+
 		_entries = append(_entries, &r.RaftLog.entries[i-firstIndex])
 	}
+	//println("qaq2")
 
 	_Append := pb.Message{
 		MsgType: pb.MessageType_MsgAppend,
@@ -269,7 +284,7 @@ func (r *Raft) sendHeartbeat(to uint64) {
 		To:      to,
 		From:    r.id,
 		Term:    r.Term,
-		Commit:  r.RaftLog.committed,
+		Commit:  util.RaftInvalidIndex,
 	}
 	r.msgs = append(r.msgs, _Heartbeat)
 }
@@ -403,7 +418,7 @@ func (r *Raft) becomeLeader() {
 	r.Lead = r.id
 	r.leadTransferee = None
 	r.heartbeatElapsed = 0
-	r.electionElapsed = 0 - rand.Intn(r.electionTimeout)
+	r.electionElapsed = 0
 
 	r.heartbeats = make(map[uint64]bool)
 	r.heartbeats[r.id] = true
@@ -434,6 +449,10 @@ func (r *Raft) Step(m pb.Message) error {
 	// Your Code Here (2A).
 	//
 
+	//fmt.Printf("%d handle raft message %s from %d to %d\n", r.id, m.MsgType, m.From, m.To)
+	if _, ok := r.Prs[r.id]; !ok {
+		fmt.Printf("%d not exist in r.Prs\n", r.id)
+	}
 	switch r.State {
 	case StateFollower:
 
